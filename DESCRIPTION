@@ -1,0 +1,20 @@
+Package: CERMBffdi
+Title: Functions to calculate FFDI, KBDI and drought factor
+Version: 0.1.0
+Date: 2021-01-19
+Authors@R: c(
+  person("Hamish", "Clarke", email = "hamishc@uow.edu.au", role = c("aut")),
+  person("Michael", "Bedward", email = "michael.bedward@gmail.com", role = c("aut", "cre")) )
+Description: Functions related to the Forest Fire Danger Index (FFDI), developed
+  for use in the Centre for Environmental Risk Management of Bushfires, 
+  University of Wollongong (Australia).
+Depends: R (>= 4.0.0)
+Imports: 
+  dplyr,
+  glue,
+  magrittr,
+  rlang
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.1.1
+License: MIT
