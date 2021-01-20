@@ -61,8 +61,11 @@ calculate_ffdi <- function(dat,
 
   colnames(dat) <- tolower(colnames(dat))
 
+  # tolower() will convert a list to a vector and lose the element
+  # names, so get the names first
+  nms <- tolower(names(fields))
   fields <- tolower(fields)
-  names(fields) <- tolower(names(fields))
+  names(fields) <- nms
 
   # Check names have been provided for all fields
   RequiredFields <- c("station", "date", "hour", "minute",
@@ -102,6 +105,10 @@ calculate_ffdi <- function(dat,
   }
 
   # Average rainfall values for station(s)
+  if (is.null(av.rainfall)) {
+    stop("av.rainfall (average annual rainfall for stations) must be provided")
+  }
+
   if (is.matrix(av.rainfall) || is.data.frame(av.rainfall)) {
     if (ncol(av.rainfall) != 2) {
       stop("Matrix or data frame for average rainfall should have ",
