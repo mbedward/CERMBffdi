@@ -8,7 +8,7 @@
 #' @format A named list with the following names and default values:
 #' \describe{
 #'   \item{station}{weather station ID number: 'station'}
-#'   \item{date}{calendar date: 'date'}
+#'   \item{date}{calendar date: 'date_local'}
 #'   \item{hour}{hour (0-23): 'hour_local'}
 #'   \item{minute}{minute (0-59): 'min_local'}
 #'   \item{precipitation}{precipitation (millimetres): 'precipitation'}
