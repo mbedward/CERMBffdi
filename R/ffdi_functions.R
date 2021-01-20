@@ -52,7 +52,7 @@
 #' @export
 #'
 calculate_ffdi <- function(dat,
-                           fields = cermbStandardFFDINames,
+                           fields = cermbStandardFFDIVars,
                            av.rainfall = NULL,
                            datatype = c("guess", "aws", "synoptic")) {
 
