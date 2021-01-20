@@ -6,9 +6,7 @@
 \usage{
 calculate_ffdi(
   dat,
-  fields = c(station = "station", date = "date_local", hour = "hour_local", minute =
-    "min_local", precipitation = "precipitation", temperature = "temperature",
-    relhumidity = "relhumidity", windspeed = "windspeed"),
+  fields = cermbStandardFFDINames,
   av.rainfall = NULL,
   datatype = c("guess", "aws", "synoptic")
 )
@@ -17,11 +15,13 @@ calculate_ffdi(
 \item{dat}{A data frame with records for one or more weather stations
 with columns for station number, date, hour, minute, precipitation,
 temperature, relative humidity and wind speed. See \code{fields}
-argument (below) for how to provide non-default column names.}
+argument (below) for how to relate column names to variables.}
 
 \item{fields}{A named vector or list where names are variables (station,
 date, hour, minute, precipitation, temperature, relhumidity, windspeed) and
-values are the correspdonding column names in the input data frame.}
+values are the corresponding column names in the input data frame. The
+default is to use the list object \code{cermbStandardFFDIVars} that is
+included in the package.}
 
 \item{av.rainfall}{Average annual rainfall value(s) to use in the calculation
 of KBDI (on which FFDI relies). Can either be a single numeric value to be
@@ -59,4 +59,8 @@ are set following the protocol described for \code{\link{calculate_kbdi}}. The
 records for each station must cover a period of at least 21 days for FFDI to
 be calculated, since Drought Factor requires an initial 20 days of daily
 rainfall data.
+}
+\seealso{
+\code{\link{cermbStandardFFDIVars}} for the default list to relate
+  variables to input column names.
 }

@@ -14,11 +14,13 @@
 #' @param dat A data frame with records for one or more weather stations
 #'   with columns for station number, date, hour, minute, precipitation,
 #'   temperature, relative humidity and wind speed. See \code{fields}
-#'   argument (below) for how to provide non-default column names.
+#'   argument (below) for how to relate column names to variables.
 #'
 #' @param fields A named vector or list where names are variables (station,
 #'   date, hour, minute, precipitation, temperature, relhumidity, windspeed) and
-#'   values are the correspdonding column names in the input data frame.
+#'   values are the corresponding column names in the input data frame. The
+#'   default is to use the list object \code{cermbStandardFFDIVars} that is
+#'   included in the package.
 #'
 #' @param av.rainfall Average annual rainfall value(s) to use in the calculation
 #'   of KBDI (on which FFDI relies). Can either be a single numeric value to be
@@ -44,18 +46,13 @@
 #'   \code{'ffdi'} (FFDI value based on daily drought factor and time-step
 #'     values for temperature, wind speed and relative humidity.
 #'
+#' @seealso \code{\link{cermbStandardFFDIVars}} for the default list to relate
+#'   variables to input column names.
+#'
 #' @export
 #'
 calculate_ffdi <- function(dat,
-                           fields = c(station = 'station',
-                                      date = 'date_local',
-                                      hour = 'hour_local',
-                                      minute = 'min_local',
-                                      precipitation = 'precipitation',
-                                      temperature = 'temperature',
-                                      relhumidity = 'relhumidity',
-                                      windspeed = 'windspeed'),
-
+                           fields = cermbStandardFFDINames,
                            av.rainfall = NULL,
                            datatype = c("guess", "aws", "synoptic")) {
 
