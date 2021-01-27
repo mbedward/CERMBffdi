@@ -891,9 +891,11 @@ calculate_daily_rainfall <- function(dat,
 # Version of max that returns NA instead of -Inf if x is
 # empty or all values are NA
 .max_with_na <- function(x) {
+  stopifnot(is.numeric(x))
+
   # If all values are NA, return NA instead of -Inf
   x <- na.omit(x)
-  if (length(x) == 0) NA
+  if (length(x) == 0) NA_real_
   else max(x, na.rm = TRUE)
 }
 
