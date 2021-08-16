@@ -847,6 +847,11 @@ calculate_daily_rainfall <- function(dat,
 # Note: the records should be for a single weather station.
 #
 .add_missing_days <- function(dat) {
+  colnames(dat) <- tolower(colnames(dat))
+  if ( !("date" %in% colnames(dat)) ) {
+    stop("Data frame must have a column 'date'")
+  }
+
   # If a station column is present there must be only one value
   station <- NA
   station.col <- match("station", tolower(colnames(dat)))

@@ -68,3 +68,51 @@ test_that("Gaps in a time series are identified", {
 })
 
 
+test_that("add missing days passes a complete time series", {
+  dat <- data.frame(
+    date = seq(as.Date("2020-01-20"), as.Date("2020-02-10"), by = "1 day"),
+    hour = 0,
+    minute = 0)
+
+  res <- CERMBffdi:::.add_missing_days(dat)
+  expect_equal(res, dat, ignore_attr = TRUE)
+  testthat::expect_length(attr(res, "dates.added"), 0)
+})
+
+
+test_that("add missing days with interrupted time series", {
+  dates.all <- seq(as.Date("2020-01-20"), as.Date("2020-02-10"), by = "1 day")
+  n <- length(dates.all)
+  ii <- sample(2:(n-1), size = min(5, n-2))
+  dates.lost <- dates.all[ii]
+  dates.kept <- dates.all[-ii]
+
+  dat <- data.frame(
+    station = 123456,
+    date = dates.kept,
+    hour = 0,
+    minute = 0)
+
+  dat$temperature <- sample(15:25, nrow(dat), replace = TRUE)
+  dat$precipitation <- 0
+  dat$relhumidity <- sample(50:100, nrow(dat), replace = TRUE)
+
+  res <- CERMBffdi:::.add_missing_days(dat)
+
+  # Day sequence should now be complete
+  expect_setequal(res$date, dates.all)
+
+  # All records should have the same station number
+  expect_true(all(res$station == 123456))
+
+  # All other non-time cols for new records should be NA
+  ii <- res$date %in% dates.lost
+  expect_true(all(is.na(res$temperature[ii])))
+  expect_true(all(is.na(res$precipitation[ii])))
+  expect_true(all(is.na(res$relhumidity[ii])))
+
+  # Attribute should hold dates added
+  x <- attr(res, "dates.added")
+  expect_setequal(x, dates.lost)
+})
+
