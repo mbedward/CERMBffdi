@@ -14,9 +14,9 @@ To install the package on your system run the following commands from your
 favourite R console:
 
 ```
-# Install devtools package if required
-install.packages("devtools")
+# Install the remotes package if not already present
+install.packages("remotes")
 
-devtools::install_github("mbedward/CERMBffdi")
+remotes::install_github("mbedward/CERMBffdi")
 
 ```
