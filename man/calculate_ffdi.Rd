@@ -8,7 +8,8 @@ calculate_ffdi(
   dat,
   fields = cermbStandardFFDIVars,
   av.rainfall = NULL,
-  datatype = c("guess", "aws", "synoptic")
+  datatype = c("guess", "aws", "synoptic"),
+  for.records = c("all", "recent")
 )
 }
 \arguments{
@@ -17,11 +18,20 @@ with columns for station number, date, hour, minute, precipitation,
 temperature, relative humidity and wind speed. See \code{fields}
 argument (below) for how to relate column names to variables.}
 
-\item{fields}{A named vector or list where names are variables (station,
-date, hour, minute, precipitation, temperature, relhumidity, windspeed) and
-values are the corresponding column names in the input data frame. The
-default is to use the list object \code{cermbStandardFFDIVars} that is
-included in the package.}
+\item{fields}{A named vector or list, used to map column names in the input
+data frame to the standardized names of variables used to calculate FFDI
+(station, date, hour, minute, precipitation, temperature, relhumidity,
+windspeed). The name of each element should be the standardized variable
+name (e.g. 'temperature') and the value of each element should be the
+corresponding column name in the input data frame (e.g.
+'Temperature.Degrees.C'). If not provided, the list object
+\code{cermbStandardFFDIVars}, included in the package, will be used. Note
+that if the input data frame includes a column for previously calculated
+values of KBDI, and the \code{for.records} argument (described below) is
+set to \code{"recent"}, then the data frame \strong{must} include the
+five additional columns \code{'tmaxdaily', 'precipdaily', 'kbdi',
+'drought', 'ffdi'} (case-insensitive), otherwise a warning message will be
+issued and the calculations will be run for all records.}
 
 \item{av.rainfall}{Average annual rainfall value(s) to use in the calculation
 of KBDI (on which FFDI relies). Can either be a single numeric value to be
@@ -36,6 +46,17 @@ daily values for the calculation of KBDI and drought factor. AWS rainfall
 values are total since 9am, whereas Synoptic values are rainfall for the
 record time step. If 'guess', the function checks whether there are records
 for sub-hourly time steps (AWS data) or not (Synoptic data).}
+
+\item{for.records}{A character string specifying the records to calculate
+values for. If \code{'all'} values are calculated for all records, and any
+existing values of FFDI, KBDI and other output variables will be ignored.
+If \code{'recent'} values will only be calculated for the most recent run
+of records that do not have values for FFDI, KBDI etc., with KBDI being
+initialized to the preceding, non-missing value. This option requires that
+the data frame \strong{must} includes the five additional columns
+\code{'tmaxdaily', 'precipdaily', 'kbdi', 'drought', 'ffdi'}
+(case-insensitive), otherwise a warning message will be issued and the
+calculations will be run for all records.}
 }
 \value{
 A data frame with columns:

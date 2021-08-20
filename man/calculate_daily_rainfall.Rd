@@ -7,7 +7,7 @@
 calculate_daily_rainfall(
   dat,
   datatype = c("guess", "aws", "synoptic"),
-  crop = FALSE,
+  trim = c("none", "both", "leading", "trailing"),
   on.error = c("stop", "null")
 )
 }
@@ -18,8 +18,13 @@ Synoptic source.}
 \item{datatype}{Source type of data. Default is to guess based on data
 values.}
 
-\item{crop}{If \code{TRUE} (default), discard the rainfall for an initial
-part day.}
+\item{trim}{Character string. One of the following values:
+\describe{
+  \item{'none'}{(Default) do not trim first or last days}
+  \item{'both'}{Return NA for the first and last days}
+  \item{'leading'}{Return NA for the first day}
+  \item{'trailing'}{Return NA for the last day}
+}}
 
 \item{on.error}{Action to perform if there is any interruption in the time
 series. If \code{'stop'}, the function will stop with an error message. If

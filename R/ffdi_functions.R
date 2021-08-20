@@ -16,11 +16,20 @@
 #'   temperature, relative humidity and wind speed. See \code{fields}
 #'   argument (below) for how to relate column names to variables.
 #'
-#' @param fields A named vector or list where names are variables (station,
-#'   date, hour, minute, precipitation, temperature, relhumidity, windspeed) and
-#'   values are the corresponding column names in the input data frame. The
-#'   default is to use the list object \code{cermbStandardFFDIVars} that is
-#'   included in the package.
+#' @param fields A named vector or list, used to map column names in the input
+#'   data frame to the standardized names of variables used to calculate FFDI
+#'   (station, date, hour, minute, precipitation, temperature, relhumidity,
+#'   windspeed). The name of each element should be the standardized variable
+#'   name (e.g. 'temperature') and the value of each element should be the
+#'   corresponding column name in the input data frame (e.g.
+#'   'Temperature.Degrees.C'). If not provided, the list object
+#'   \code{cermbStandardFFDIVars}, included in the package, will be used. Note
+#'   that if the input data frame includes a column for previously calculated
+#'   values of KBDI, and the \code{for.records} argument (described below) is
+#'   set to \code{"recent"}, then the data frame \strong{must} include the
+#'   five additional columns \code{'tmaxdaily', 'precipdaily', 'kbdi',
+#'   'drought', 'ffdi'} (case-insensitive), otherwise a warning message will be
+#'   issued and the calculations will be run for all records.
 #'
 #' @param av.rainfall Average annual rainfall value(s) to use in the calculation
 #'   of KBDI (on which FFDI relies). Can either be a single numeric value to be
@@ -35,6 +44,17 @@
 #'   values are total since 9am, whereas Synoptic values are rainfall for the
 #'   record time step. If 'guess', the function checks whether there are records
 #'   for sub-hourly time steps (AWS data) or not (Synoptic data).
+#'
+#' @param for.records A character string specifying the records to calculate
+#'   values for. If \code{'all'} values are calculated for all records, and any
+#'   existing values of FFDI, KBDI and other output variables will be ignored.
+#'   If \code{'recent'} values will only be calculated for the most recent run
+#'   of records that do not have values for FFDI, KBDI etc., with KBDI being
+#'   initialized to the preceding, non-missing value. This option requires that
+#'   the data frame \strong{must} includes the five additional columns
+#'   \code{'tmaxdaily', 'precipdaily', 'kbdi', 'drought', 'ffdi'}
+#'   (case-insensitive), otherwise a warning message will be issued and the
+#'   calculations will be run for all records.
 #'
 #' @return A data frame with columns:
 #'   \code{'station'};
@@ -54,7 +74,13 @@
 calculate_ffdi <- function(dat,
                            fields = cermbStandardFFDIVars,
                            av.rainfall = NULL,
-                           datatype = c("guess", "aws", "synoptic")) {
+                           datatype = c("guess", "aws", "synoptic"),
+                           for.records = c("all", "recent")) {
+
+  # Allow for upper or lower case with optional character args
+  #
+  datatype <- match.arg(tolower(datatype), c("guess", "aws", "synoptic"))
+  for.records <- match.arg(tolower(for.records), c("all", "recent"))
 
   # Make sure we have a plain vanilla data frame
   dat <- as.data.frame(dat)
@@ -67,14 +93,17 @@ calculate_ffdi <- function(dat,
   fields <- tolower(fields)
   names(fields) <- nms
 
-  # Check names have been provided for all fields
+  # Check names have been provided for all fields. This is in case
+  # we are using a user-supplied `fields` object rather than the
+  # package default object.
+  #
   RequiredFields <- c("station", "date", "hour", "minute",
                       "precipitation", "temperature", "relhumidity",
                       "windspeed")
 
   ii <- RequiredFields %in% names(fields)
   if (!all(ii)) {
-    msg <- paste(names(fields)[!ii], sep = ", ")
+    msg <- paste(RequiredFields[!ii], sep = ", ")
     stop("No column name(s) specified for ", msg)
   }
 
@@ -86,9 +115,22 @@ calculate_ffdi <- function(dat,
 
   colnames(dat)[ii] <- names(fields)
 
-  dat <- dat[, ii]
+  if (for.records == "all") {
+    # If doing calculations for all records so subset the
+    # data frame to just the required columns
+    dat <- dat[, ii]
 
-  datatype <- match.arg(tolower(datatype), c("guess", "aws", "synoptic"))
+  } else {
+    # Doing calculations for most recent records, so check for all
+    # of the expected columns from previous calculations
+    ExtraRequiredFields <- c("tmaxdaily", "precipdaily", "kbdi", "drought", "ffdi")
+    ii <- ExtraRequiredFields %in% colnames(dat)
+    if (!all(ii)) {
+      msg <- paste(ExtraRequiredFields[!ii], sep = ", ")
+      warning("Did not find columns ", msg, "\nWill run calculation for all records")
+    }
+  }
+
   if (datatype == "guess") {
     datatype <- .guess_data_type(dat)
   }
@@ -97,7 +139,6 @@ calculate_ffdi <- function(dat,
   # Station numbers in data
   stations <- unique(dat$station)
   nstns <- length(stations)
-
 
   # Helper to check for (perhaps) valid rainfall values
   is_valid_rain <- function(x) {
@@ -141,6 +182,7 @@ calculate_ffdi <- function(dat,
 
     .do_calculate_ffdi(dat[ii.dat, ],
                        datatype,
+                       for.records,
                        av.rainfall[ii.rain, 2])
   })
 
@@ -152,7 +194,11 @@ calculate_ffdi <- function(dat,
 #
 .do_calculate_ffdi <- function(dat.stn,
                                datatype,
+                               for.records,
                                av.rainfall = NULL) {
+
+  # Names of columns added or updated by this function
+  OutputCols <- c("tmaxdaily", "precipdaily", "kbdi", "drought", "ffdi", "ffdi_quality")
 
   # Sanity checks on the upstream call
   stopifnot(dplyr::n_distinct(dat.stn$station) == 1)
@@ -162,13 +208,31 @@ calculate_ffdi <- function(dat,
   stopifnot(!is.null(av.rainfall))
   stopifnot(length(av.rainfall) == 1 && av.rainfall > 0)
 
-  # Check the time series is long enough for KBDI and drought
-  # calculations which need 20 prior days of rainfall data
+  stopifnot(for.records %in% c("all", "recent"))
+
+  # Ensure only one record per time point (this will arbitrarily
+  # take the first from any group of duplicate records)
+  dat.stn <- dat.stn %>%
+    dplyr::distinct(date, hour, minute, .keep_all = TRUE)
+
+
+  # Add dummy records for any missing days. Dates of dummy records
+  # are returned as an attribute.
+  dat.stn <- .add_missing_days(dat.stn)
+  dates.added <- attr(dat.stn, "dates.added", exact = TRUE)
+  attr(dat.stn, "dates.added") <- NULL
+
+  # Treat missing rainfall values as zero (least worst option)
+  dat.stn$precipitation <- .na2zero(dat.stn$precipitation)
+
+  # Check that the time series is long enough for KBDI and drought factor
+  # calculations which need 20 prior days of rainfall data.
+  #
   dat.stn <- dat.stn %>%
     dplyr::arrange(date, hour, minute)
 
   d0 <- dat.stn$date[1]
-  d1 <- tail(dat.stn$date, 1)
+  d1 <- utils::tail(dat.stn$date, 1)
   ndays <- d1 - d0
   if (ndays < 21) {
     the.station <- dat.stn$station[1]
@@ -179,29 +243,70 @@ calculate_ffdi <- function(dat,
     return(NULL)
   }
 
-  # Ensure only one record per time point (this will arbitrarily
-  # take the first from any duplicate set)
-  dat.stn <- dat.stn %>%
-    dplyr::distinct(date, hour, minute, .keep_all = TRUE)
 
-  # Treat missing rainfall values as zero (least worst option)
-  dat.stn$precipitation <- .na2zero(dat.stn$precipitation)
+  # Start by assuming that calculations will begin from
+  # the first record
+  start.rec <- 1
 
-  # Add dummy records for any missing days. Dates of dummy records
-  # are returned as an attribute.
-  dat.stn <- .add_missing_days(dat.stn)
-  dates.added <- attr(dat.stn, "dates.added", exact = TRUE)
-  attr(dat.stn, "dates.added") <- NULL
+  # If for.records == "recent", check that there are previous values
+  # of KBDI prior to the most recent run of records with missing KBDI, FFDI etc.
+  #
+  if (for.records == "recent") {
+    if ( !("kbdi" %in% colnames(dat.stn)) ) {
+      # No kbdi column, so do calculation for all records
+      for.records <- "all"
+
+    } else {
+      # There is a kbdi column, so check for a recent run of missing values
+      # preceded by non-missing values
+      #
+      i <- .find_na_tail(dat.stn$kbdi)
+
+      if (is.na(i)) {
+        # There is no trailing block of records with missing KBDI.
+        # Play it safe and do calculations for all records.
+        for.records <- "all"
+
+      } else if (i == 1) {
+        # all KBDI values are missing
+        for.records <- "all"
+
+      } else {
+        # Most recent records have missing KBDI values and they are
+        # preceded by at least one record with KBDI. Set the start
+        # record to be 30 days prior to the most recent records to
+        # give enough time for the rainfall effects to settle.
+        d <- dat.stn$date[i] - 30
+        d <- max(d, min(dat.stn$date))
+        start.rec <- match(d, dat.stn$date, nomatch = 1)
+
+        # Just in case
+        if (start.rec == 1) {
+          for.records <- "all"
+        }
+      }
+    }
+  }
+
+  # If calculating values for all records, make sure we don't have any
+  # columns for previously calculated variables
+  if (for.records == "all") {
+    dat.stn <- dat.stn %>%
+      dplyr::select( -dplyr::any_of(OutputCols) )
+  }
+
+  end.rec <- nrow(dat.stn)
 
   # Tmax by calendar day
   #
-  dat.daily <- dat.stn %>%
+  dat.daily <- dat.stn[start.rec:end.rec, ] %>%
     dplyr::group_by(date) %>%
     dplyr::summarize(tmaxdaily = .max_with_na(temperature)) %>%
     dplyr::ungroup()
 
   # Add daily rainfall data
-  r <- calculate_daily_rainfall(dat.stn, datatype = datatype)
+  r <- calculate_daily_rainfall(dat.stn[start.rec:end.rec, ], datatype = datatype)
+
   dat.daily <- dplyr::left_join(dat.daily, r, by = c("date" = "raindate"))
 
   # Guard against a missing daily rainfall value which can arise
@@ -214,6 +319,16 @@ calculate_ffdi <- function(dat,
     dplyr::ungroup() %>%
     dplyr::arrange(date)
 
+  # Do calculations for the selected records
+  if (for.records == "recent") {
+    # Add previously calculated KBDI and drought factor values for leading records
+    dat.prev.kbdi <- dat.stn[start.rec:nrow(dat.stn), ] %>%
+      dplyr::select(date, kbdi, drought) %>%
+      dplyr::distinct(date, .keep_all = TRUE)
+
+    dat.daily <- dat.daily %>%
+      dplyr::left_join(dat.prev.kbdi, by = "date")
+  }
 
   dat.daily <- dat.daily %>%
     calculate_kbdi(average.rainfall = av.rainfall, assume.order = TRUE) %>%
@@ -222,18 +337,25 @@ calculate_ffdi <- function(dat,
 
   # Join daily values to original time-step data
   dat.stn <- dat.stn %>%
-    dplyr::arrange(date, hour, minute) %>%
-    dplyr::left_join(dat.daily, by = "date") %>%
+    dplyr::arrange(date, hour, minute)
 
-    # Add calculated FFDI values.
-    # Missing values in any of the input variables will propagate
-    # through to FFDI.
-    dplyr::mutate(ffdi = round(
-      2 * exp(0.987 * log(drought) - 0.45 +
-                0.0338 * temperature +
-                0.0234 * windspeed -
-                0.0345 * relhumidity),
-      digits = 1))
+  if (for.records == "all") {
+    dat.stn <- dat.stn %>%
+      dplyr::left_join(dat.daily, by = "date") %>%
+      dplyr::mutate(ffdi = .fn_ffdi(temperature, windspeed, relhumidity, drought))
+
+  } else {
+    # For update of recent records, just update those records where the
+    # calculated variables were previously missing.
+    dat.prev <- dat.stn[1:(start.rec-1), ]
+
+    dat.recent <- dat.stn[start.rec:end.rec, ] %>%
+      dplyr::select( -dplyr::any_of(OutputCols) ) %>%
+      dplyr::left_join(dat.daily, by = "date") %>%
+      dplyr::mutate(ffdi = .fn_ffdi(temperature, windspeed, relhumidity, drought))
+
+    dat.stn <- dplyr::bind_rows(dat.prev, dat.recent)
+  }
 
   # Remove any dummy records that were added for missing days
   if (length(dates.added) > 0) {
@@ -379,7 +501,7 @@ calculate_kbdi <- function(dat.daily,
       # data are available for that period, we set previous KBDI to
       # maximum deficit of 203.2
       #
-      Krecent <- na.omit( Kday[(i-2):max(1, i-30)] )
+      Krecent <- stats::na.omit( Kday[(i-2):max(1, i-30)] )
       if (length(Krecent) > 0) {
         # most recent non-missing value
         Kprev <- Krecent[1]
@@ -647,8 +769,13 @@ calculate_effective_rainfall <- function(precipdaily, start.balance = 0) {
 #' @param datatype Source type of data. Default is to guess based on data
 #'   values.
 #'
-#' @param crop If \code{TRUE} (default), discard the rainfall for an initial
-#'   part day.
+#' @param trim Character string. One of the following values:
+#'   \describe{
+#'     \item{'none'}{(Default) do not trim first or last days}
+#'     \item{'both'}{Return NA for the first and last days}
+#'     \item{'leading'}{Return NA for the first day}
+#'     \item{'trailing'}{Return NA for the last day}
+#'   }
 #'
 #' @param on.error Action to perform if there is any interruption in the time
 #'   series. If \code{'stop'}, the function will stop with an error message. If
@@ -661,9 +788,10 @@ calculate_effective_rainfall <- function(precipdaily, start.balance = 0) {
 #'
 calculate_daily_rainfall <- function(dat,
                                      datatype = c("guess", "aws", "synoptic"),
-                                     crop = FALSE,
+                                     trim = c("none", "both", "leading", "trailing"),
                                      on.error = c("stop", "null")) {
 
+  trim = match.arg(trim)
   on.error <- match.arg(on.error)
 
   colnames(dat) <- tolower(colnames(dat))
@@ -687,7 +815,7 @@ calculate_daily_rainfall <- function(dat,
 
   # Helper function to aggregate rain-day values
   fn_rainday <- function(rain) {
-    rain <- na.omit(rain)
+    rain <- stats::na.omit(rain)
     if (length(rain) == 0) {
       0
     } else {
@@ -715,25 +843,29 @@ calculate_daily_rainfall <- function(dat,
       }
     }
 
-    dat.stn <- dat.stn %>%
-      dplyr::arrange(date, hour, minute) %>%
-
-      dplyr::mutate(raindate = date,
-                    timestr = sprintf("%02d%02d", hour, minute))
-
-    # Do this bit outside of dplyr to avoid it spuriously converting
-    # dates to integers
-    ii <- dat.stn$timestr < "0901"
-    dat.stn$raindate[ii] <- dat.stn$raindate[ii] - 1
-
-    min.raindate <- min(dat.stn$raindate)
+    dat.stn <- .get_rain_date(dat.stn, add_as_column = TRUE)
 
     dat.stn <- dat.stn %>%
       dplyr::group_by(raindate) %>%
       dplyr::summarize(precipdaily = fn_rainday(precipitation))
 
 
-    if (crop) dat.stn <- dplyr::filter(dat.stn, raindate > min.raindate)
+    if (trim != "none") {
+      d0 <- min(dat.stn$raindate)
+      d1 <- max(dat.stn$raindate)
+
+      itrim <- logical( nrow(dat.stn) )
+
+      if (trim == "both" || trim == "leading") {
+        itrim <- itrim | dat.stn$raindate == d0
+      }
+
+      if (trim == "both" || trim == "trailing") {
+        itrim <- itrim | dat.stn$raindate == d1
+      }
+
+      dat.stn$precipdaily[itrim] <- NA_real_
+    }
 
     dat.stn
   })
@@ -750,6 +882,21 @@ calculate_daily_rainfall <- function(dat,
   if (!HasStation) res$station <- NULL
 
   res
+}
+
+
+# Helper to calculate FFDI values, used by function .do_calculate_ffdi().
+#
+# Missing values in any of the input variables will propagate
+# through to FFDI.
+#
+.fn_ffdi <- function(temperature, windspeed, relhumidity, drought) {
+  round(
+    2 * exp(0.987 * log(drought) - 0.45 +
+              0.0338 * temperature +
+              0.0234 * windspeed -
+              0.0345 * relhumidity),
+    digits = 1)
 }
 
 
@@ -893,13 +1040,45 @@ calculate_daily_rainfall <- function(dat,
 }
 
 
+# Take a data frame with date, hour and minute columns, and determine
+# the raindate (09:01-09:00 daily rainfall) for each record. If `add_as_column`
+# is TRUE, return the data frame with raindate as a new column, otherwise
+# return raindate as a vector.
+#
+.get_rain_date <- function(dat, add_as_column) {
+  stopifnot( all(c("date", "hour", "minute") %in% tolower(colnames(dat))) )
+
+  dat <- dat %>%
+    dplyr::arrange(date, hour, minute) %>%
+
+    dplyr::mutate(raindate = date,
+                  timestr = sprintf("%02d%02d", hour, minute))
+
+  # Do this bit outside of dplyr to avoid it spuriously converting
+  # dates to integers
+  ii <- dat$timestr < "0901"
+  dat$raindate[ii] <- dat$raindate[ii] - 1
+
+  if (add_as_column) {
+    # return data frame with raindate column (after removing the timestr column)
+    dat$timestr <- NULL
+
+    dat
+
+  } else {
+    # just return raindate as a vector
+    dat$raindate
+  }
+}
+
+
 # Version of max that returns NA instead of -Inf if x is
 # empty or all values are NA
 .max_with_na <- function(x) {
   stopifnot(is.numeric(x))
 
   # If all values are NA, return NA instead of -Inf
-  x <- na.omit(x)
+  x <- stats::na.omit(x)
   if (length(x) == 0) NA_real_
   else max(x, na.rm = TRUE)
 }
