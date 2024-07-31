@@ -12,38 +12,50 @@
 #' rainfall data.
 #'
 #' @param dat A data frame with records for one or more weather stations
-#'   with columns for station number, date, hour, minute, precipitation,
-#'   temperature, relative humidity and wind speed. See \code{fields}
-#'   argument (below) for how to relate column names to variables.
+#'   with the following minimum set of columns:
+#'   \describe{
+#'     \item{station}{Station identifier (integer or alpha-numeric).}
+#'     \item{date}{Calendar date as an R \code{Date} object.}
+#'     \item{hour}{Integer hour (0-23).}
+#'     \item{minute}{Integer minute (0-59).}
+#'     \item{precipitation}{Precipitation in millimetres. Values are treated in
+#'       accordance with Australian Bureau of Meteorology conventions. If data
+#'       are AWS records, the value is the total since 9am local time; if
+#'       synoptic records, the value is treated as rainfall since the last
+#'       observation time.}
+#'     \item{temperature}{Temperature in degrees Celsius.}
+#'     \item{relhumidity}{Relative humidity expressed as a percentage.}
+#'     \item{windspeed}{Wind speed in km/h.}
+#'   }
 #'
-#' @param fields A named vector or list, used to map column names in the input
-#'   data frame to the standardized names of variables used to calculate FFDI
-#'   (station, date, hour, minute, precipitation, temperature, relhumidity,
-#'   windspeed). The name of each element should be the standardized variable
-#'   name (e.g. 'temperature') and the value of each element should be the
-#'   corresponding column name in the input data frame (e.g.
-#'   'Temperature.Degrees.C'). If not provided, the list object
-#'   \code{cermbStandardFFDIVars}, included in the package, will be used. Note
-#'   that if the input data frame includes a column for previously calculated
-#'   values of KBDI, and the \code{for.records} argument (described below) is
-#'   set to \code{"recent"}, then the data frame \strong{must} include the
-#'   five additional columns \code{'tmaxdaily', 'precipdaily', 'kbdi',
-#'   'drought', 'ffdi'} (case-insensitive), otherwise a warning message will be
-#'   issued and the calculations will be run for all records.
+#'   If FFDI is only being calculated for the latest portion of the input data
+#'   (as indicated by specifying \code{for.records = 'recent'}), then an
+#'   additional five columns must be present in the input data with previously
+#'   calculated values from this function to initialize the KBDI and FFDI
+#'   calculations for the new records:
+#'   \describe{
+#'     \item{tmaxdaily}{Maximum daily temperature in degrees Celsius.}
+#'     \item{precipdaily}{Precipitation aggregated to a daily value.}
+#'     \item{kbdi}{KBDI value.}
+#'     \item{drought}{Drought factor value.}
+#'     \item{ffdi}{FFDI value.}
+#'   }
 #'
 #' @param av.rainfall Average annual rainfall value(s) to use in the calculation
 #'   of KBDI (on which FFDI relies). Can either be a single numeric value to be
-#'   applied to all stations in the input data, or a two-column matrix or data
-#'   frame with station numbers in the first column and average rainfall values
-#'   in the second column.
+#'   applied to all stations in the input data, or a two-column data frame with
+#'   station numbers in the first column and average rainfall values in the
+#'   second column. A two-column matrix is also an option if all station
+#'   identifiers are numeric rather than alpha-numeric.
 #'
 #' @param datatype Either a specified data type ('aws' or 'synoptic') or 'guess'
 #'   (default) to guess the type from the data. Case-insensitive and may be
 #'   abbreviated. The data type controls how rainfall values are aggregated to
 #'   daily values for the calculation of KBDI and drought factor. AWS rainfall
-#'   values are total since 9am, whereas Synoptic values are rainfall for the
-#'   record time step. If 'guess', the function checks whether there are records
-#'   for sub-hourly time steps (AWS data) or not (Synoptic data).
+#'   values are total since 9am, whereas Synoptic values are rainfall for a
+#'   given recording interval (e.g. the previous three hours). If 'guess', the
+#'   function checks whether there are records for sub-hourly time steps (AWS
+#'   data) or not (Synoptic data).
 #'
 #' @param for.records A character string specifying the records to calculate
 #'   values for. If \code{'all'} values are calculated for all records, and any
@@ -58,7 +70,7 @@
 #'
 #' @return A data frame with columns:
 #'   \code{'station'};
-#'   date, hour and minute (named to match input names, e.g. date_local);
+#'   \code{'date'}, \code{'hour'} and \code{'minute'};
 #'   \code{'tmaxdaily'} (maximum temperature for calendar day);
 #'   \code{'precipdaily'} (total rainfall from 09:01 to 09:00 the next day);
 #'   \code{'kbdi'} (Keetch-Bryam drought index);
@@ -66,13 +78,12 @@
 #'   \code{'ffdi'} (FFDI value based on daily drought factor and time-step
 #'     values for temperature, wind speed and relative humidity.
 #'
-#' @seealso \code{\link{cermbStandardFFDIVars}} for the default list to relate
-#'   variables to input column names.
+#' @seealso \code{\link{FFDIVars}} for the look-up table used by this function
+#'   to check input data column names
 #'
 #' @export
 #'
 calculate_ffdi <- function(dat,
-                           fields = cermbStandardFFDIVars,
                            av.rainfall = NULL,
                            datatype = c("guess", "aws", "synoptic"),
                            for.records = c("all", "recent")) {
@@ -87,47 +98,38 @@ calculate_ffdi <- function(dat,
 
   colnames(dat) <- tolower(colnames(dat))
 
-  # tolower() will convert a list to a vector and lose the element
-  # names, so get the names first
-  nms <- tolower(names(fields))
-  fields <- tolower(fields)
-  names(fields) <- nms
-
-  # Check names have been provided for all fields. This is in case
-  # we are using a user-supplied `fields` object rather than the
-  # package default object.
-  #
-  RequiredFields <- c("station", "date", "hour", "minute",
-                      "precipitation", "temperature", "relhumidity",
-                      "windspeed")
-
-  ii <- RequiredFields %in% names(fields)
-  if (!all(ii)) {
-    msg <- paste(RequiredFields[!ii], sep = ", ")
-    stop("No column name(s) specified for ", msg)
+  # Check that all mandatory columns are present
+  req_names <- base::subset(FFDIVars, mandatory)$varname
+  ok <- req_names %in% colnames(dat)
+  if (!all(ok)) {
+    msg <- paste(req_names[!ok], collapse = ", ")
+    stop("Input data missing expected column(s): ", msg)
   }
 
-  # Set standard column names and drop any additional columns
-  ii <- match(fields, colnames(dat))
-  if (any(is.na(ii))) {
-    stop("Bummer - problem matching field names to data column names")
+  # Check date field
+  if (!checkmate::test_date(dat$date)) {
+    if (is.character(dat$date)) {
+      # Try converting to Date objects assuming YYYY-mm-dd format
+      dat$date <- tryCatch({as.Date(dat$date)}, error = function(...) stop("Character strings for date must be in YYYY-mm-dd format"))
+    } else {
+      stop("The date column should contain R Date objects or character strings in YYYY-mm-dd format")
+    }
   }
-
-  colnames(dat)[ii] <- names(fields)
 
   if (for.records == "all") {
     # If doing calculations for all records so subset the
     # data frame to just the required columns
-    dat <- dat[, ii]
+    dat <- dat[, req_names]
 
   } else {
     # Doing calculations for most recent records, so check for all
     # of the expected columns from previous calculations
-    ExtraRequiredFields <- c("tmaxdaily", "precipdaily", "kbdi", "drought", "ffdi")
+    ExtraRequiredFields <- base::subset(FFDIVars, !mandatory)$varname
     ii <- ExtraRequiredFields %in% colnames(dat)
     if (!all(ii)) {
       msg <- paste(ExtraRequiredFields[!ii], sep = ", ")
-      warning("Did not find columns ", msg, "\nWill run calculation for all records")
+      warning("Did not find data column(s) required for partial FFDI calculation:", msg,
+              "\nWill calculate FFDI based on all records", immediate. = TRUE)
     }
   }
 
@@ -156,16 +158,16 @@ calculate_ffdi <- function(dat,
            "two columns (station, rainfall)")
     }
 
-    if (is.data.frame(av.rainfall)) {
-      av.rainfall <- as.matrix(av.rainfall)
+    if (is.matrix(av.rainfall)) {
+      av.rainfall <- as.data.frame(av.rainfall)
     }
 
   } else {
-    # Turn single value into matrix
-    av.rainfall <- cbind(station = stations, rainfall = av.rainfall[1])
+    # Turn single value into a data frame
+    av.rainfall <- data.frame(station = stations, rainfall = av.rainfall[1])
   }
 
-  # Check average rainfall matrix
+  # Check average rainfall value(s)
   ii <- stations %in% av.rainfall[,1]
   if (!all(ii)) {
     stop("No average rainfall specified for station(s): ", stations[ii])
